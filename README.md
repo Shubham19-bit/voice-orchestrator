@@ -26,22 +26,27 @@ mic ─▶ VAD ─┬───────────────────�
 
 ## Results on the bundled simulator
 
-The numbers below come from 6 scripted patient calls × 5 variants, using the offline heuristic decider and simulated providers:
+6 scripted patient calls × 5 variants (150 turns), simulated providers:
 
-| Strategy | Latency p50 | p90 | Audible cut-ins | Stopped on "mm-hmm" | Interruption stop p50 |
-|---|---|---|---|---|---|
-| baseline-700 (fixed silence, LLM routing, VAD barge-in) | 1,986 ms | 2,384 ms | 0% | 100% | 340 ms |
-| aggressive-400 | 1,674 ms | 2,004 ms | 0% | 100% | 340 ms |
-| semantic-eot only | 1,729 ms | 2,163 ms | 0% | 100% | 340 ms |
-| **hybrid** | **1,027 ms** | **1,322 ms** | 4% | **0%** | 737 ms |
+| Strategy | Decider | Latency p50 | p90 | Cut-ins | Tool acc. | Stops on "mm-hmm" | Agent quiet on interruption |
+|---|---|---|---|---|---|---|---|
+| baseline-700 (fixed silence, LLM routing, VAD barge-in) | – | 1,986 ms | 2,384 ms | 0% | 100%* | 100% | 340 ms |
+| hybrid | heuristic | 1,027 ms | 1,322 ms | 4% | 89% | 0% | 737 ms |
+| hybrid | mini-Jev | 944 ms | 1,406 ms | 4% | 96% | 0% | 579 ms |
+| **hybrid-v2** | **mini-Jev** | **944 ms** | **1,201 ms** | 4% | **96%** | **0%** | **40 ms** |
 
-Each design choice has a cost, and the benchmark shows it:
+\* LLM routing is simulated by an oracle that always picks the right tool, which is the best case for the baseline.
 
-- Hybrid cuts in on 4% of turns (e.g. "I'm not sure ⏸ when my next…").
-- Hybrid takes longer to stop on a real interruption.
-- The heuristic decider routes tools less accurately than an (oracle) LLM.
+hybrid-v2 adds four changes:
 
-Plugging in real Jev is meant to close those gaps. Measure it; don't assume it.
+- **Speculation when unsure:** the pipeline also starts when P(done) ≥ 0.2, so it runs *during* the long wait.
+- **Uncertainty-scaled wait:** the less sure the model is, the longer it waits, on a smooth scale instead of one big step.
+- **Clause-level TTS:** speech starts at the first comma instead of the first full stop.
+- **Instant ducking:** the agent's volume drops the moment the patient speaks over it. It then stops if this is an interruption, or restores volume after a backchannel.
+
+**Tried and rejected:** adaptive patience (waiting at least as long as this caller's longest recent pause). Cut-ins dropped from 4% to 3%, but median latency rose 76 ms and p90 rose 280 ms.
+
+The remaining 4% of cut-ins come from one genuinely ambiguous pause: "um I'm not sure ⏸ 1.2 s ⏸ when my next appointment is".
 
 ## Quick start (any laptop, no GPU, no API keys)
 

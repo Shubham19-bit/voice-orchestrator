@@ -89,9 +89,16 @@ class SpeakerOut(AudioOut):
         import sounddevice as sd
         self.stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency="low")
         self.stream.start()
+        self.gain = 1.0
 
     async def play(self, chunk: AudioChunk) -> None:
-        await asyncio.to_thread(self.stream.write, chunk.data)
+        data = chunk.data
+        if self.gain != 1.0:
+            data = (np.frombuffer(data, dtype=np.int16) * self.gain).astype(np.int16).tobytes()
+        await asyncio.to_thread(self.stream.write, data)
+
+    def duck(self, on: bool) -> None:
+        self.gain = 0.2 if on else 1.0
 
     def stop(self) -> None:
         try:  # drop whatever is buffered in the device right now

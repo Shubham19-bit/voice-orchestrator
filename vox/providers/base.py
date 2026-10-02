@@ -35,3 +35,6 @@ class AudioOut:
 
     def stop(self) -> None:
         """Flush anything buffered (barge-in)."""
+
+    def duck(self, on: bool) -> None:
+        """Lower (on=True) or restore (on=False) playback volume."""

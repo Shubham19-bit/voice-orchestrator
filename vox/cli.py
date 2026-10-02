@@ -142,13 +142,13 @@ def main(argv=None) -> None:
 
     d = sub.add_parser("demo", help="replay one scripted call and print the timeline")
     d.add_argument("--scenario", default="refill")
-    d.add_argument("--strategy", default="hybrid")
+    d.add_argument("--strategy", default="hybrid-v2")
     d.add_argument("--decider", default="heuristic", help="heuristic | minijev | ollama | ollaya | llm | jev")
     d.add_argument("--variant", type=int, default=0)
     d.set_defaults(fn=cmd_demo)
 
     b = sub.add_parser("bench", help="run all scenarios × strategies, write report + charts")
-    b.add_argument("--strategies", default="baseline-700,aggressive-400,semantic-eot,hybrid")
+    b.add_argument("--strategies", default="baseline-700,aggressive-400,semantic-eot,hybrid,hybrid-v2")
     b.add_argument("--deciders", default="heuristic", help="comma list: heuristic,minijev,ollama,ollaya,llm,jev")
     b.add_argument("--variants", type=int, default=5)
     b.add_argument("--budget-ms", type=float, default=350, help="decider latency budget before fallback")
@@ -161,7 +161,7 @@ def main(argv=None) -> None:
     pr.set_defaults(fn=cmd_probe)
 
     lv = sub.add_parser("live", help="talk to the agent through your mic (headphones!)")
-    lv.add_argument("--strategy", default="hybrid")
+    lv.add_argument("--strategy", default="hybrid-v2")
     lv.add_argument("--decider", default="heuristic-local", help="heuristic-local | minijev | ollama | ollaya | llm | jev")
     lv.set_defaults(fn=cmd_live)
 

@@ -84,6 +84,7 @@ class Overlap:
     kind: str = "?"
     stopped: bool = False
     t_stop: float | None = None
+    t_quiet: float | None = None     # when the agent became quiet (ducked or stopped)
     text: str = ""
 
 
@@ -99,6 +100,7 @@ class Orchestrator:
 
         self.words: list[Word] = []
         self.turn_reset_ms = float("-inf")
+        self.pauses: list[float] = []    # this caller's observed mid-turn pauses (adaptive patience)
         self.turn_prefix = ""            # carried-over text when we cut the patient off (see _barge_in_stop)
         self.turn_has_voice = False
         self.user_speaking = False
@@ -127,6 +129,8 @@ class Orchestrator:
 
     def on_voice_start(self, t: float | None = None) -> None:
         t = now_ms() if t is None else t
+        if self.silence_start_ms is not None and self.turn_has_voice and not (self.resp and self.resp.playing):
+            self._note_pause(t - self.silence_start_ms)  # they paused, then carried on: a mid-turn pause
         self.user_speaking, self.voice_start_ms, self.silence_start_ms = True, t, None
         self.tracer.event("voice_start", "user")
         self._cancel(self._silence_task)
@@ -154,6 +158,16 @@ class Orchestrator:
             self._silence_task = asyncio.create_task(self._silence_watch(t))
 
     # ================================================================ helpers
+    def _note_pause(self, ms: float) -> None:
+        if ms >= 300:
+            self.pauses.append(ms)
+
+    def min_wait_ms(self) -> float:
+        """Adaptive patience: never answer sooner than this caller's longest recent mid-turn pause."""
+        if not self.s.adaptive_patience or not self.pauses:
+            return 0.0
+        return min(self.s.patience_cap_ms, max(self.pauses[-5:]) + self.s.patience_margin_ms)
+
     def turn_text(self) -> str:
         new = " ".join(w.text for w in self.words if w.start_ms >= self.turn_reset_ms).strip()
         return f"{self.turn_prefix} {new}".strip() if self.turn_prefix else new
@@ -208,12 +222,20 @@ class Orchestrator:
                     p = analysis.eot_prob
                     if self.resp and not self.resp.playing and self.resp.turn_text != text:
                         self._cancel_response(self.resp, "stale")
-                    if p >= s.commit_prob:
+                    if p >= s.commit_prob and now_ms() >= t0 + self.min_wait_ms():
                         self._start_or_commit(analysis, t0)
                         return
+                    if p >= s.commit_prob and self.resp is None:  # confident, but this caller pauses long
+                        self._start_response(analysis, t0, committed=False)
                     if s.speculate and p >= s.speculate_prob and self.resp is None:
                         self._start_response(analysis, t0, committed=False)
-                deadline = t0 + (s.hold_ms if p >= s.speculate_prob else s.max_wait_ms)
+                if p >= s.hold_prob:
+                    wait = s.hold_ms
+                elif s.scaled_wait:
+                    wait = s.hold_ms + (1 - p) * (s.max_wait_ms - s.hold_ms)
+                else:
+                    wait = s.max_wait_ms
+                deadline = t0 + max(wait, self.min_wait_ms())
                 if now_ms() >= deadline:
                     if text:
                         self._start_or_commit(analysis if text == last_text else None, t0)
@@ -330,7 +352,10 @@ class Orchestrator:
             r.reply_text += piece
             # flush on sentence end (or a long clause) so TTS starts as early as possible
             while True:
-                m = re.search(r"[.!?](\s|$)", buf) or (re.search(r",\s", buf) if len(buf.split()) >= 8 else None)
+                first = r.t_tts_start is None and self.s.first_chunk_words > 0
+                clause_words = self.s.first_chunk_words if first else 8
+                m = (re.search(r"[.!?](\s|$)", buf)
+                     or (re.search(r"[,;:]\s", buf) if len(buf.split()) >= clause_words else None))
                 if not m:
                     break
                 sent, buf = buf[:m.end()], buf[m.end():]
@@ -403,6 +428,10 @@ class Orchestrator:
                     ov.kind = "short-noise"
                 return
 
+            if s.duck_on_overlap and r.playing:
+                self.audio_out.duck(True)
+                ov.t_quiet = now_ms()
+                self.tracer.event("duck", "bargein", response=r.id)
             last = None
             while r.playing:
                 text = self._overlap_text(ov.t_start)
@@ -423,6 +452,8 @@ class Orchestrator:
                         and now_ms() - self.silence_start_ms > 250):
                     # it was a backchannel / noise: keep talking, forget those words
                     self.turn_reset_ms = now_ms()
+                    if s.duck_on_overlap:
+                        self.audio_out.duck(False)
                     return
                 await self._wait_words(now_ms() + 100)
         finally:
@@ -430,6 +461,8 @@ class Orchestrator:
 
     def _barge_in_stop(self, r: Response, ov: Overlap) -> None:
         ov.stopped, ov.t_stop = True, now_ms()
+        ov.t_quiet = ov.t_quiet or ov.t_stop
+        self.audio_out.duck(False)  # next reply starts at full volume
         self.tracer.event("barge_in_stop", "bargein", response=r.id, after_ms=round(ov.t_stop - ov.t_start))
         self.log(f"[agent ■] stopped by barge-in after {ov.t_stop - ov.t_start:.0f} ms")
         self.audio_out.stop()
@@ -441,6 +474,8 @@ class Orchestrator:
             # we most likely cut them off mid-thought: treat it as ONE turn, so the
             # decider/LLM see "I'm not sure when my next appointment is", not two fragments
             self.turn_prefix = r.turn_text
+            if r.t_silence is not None:
+                self._note_pause(ov.t_start - r.t_silence)  # we cut them off: that pause was mid-turn
             if self.history[-1:] == [{"role": "user", "content": r.turn_text}]:
                 self.history.pop()
             r.outcome = "interrupted_merged"

@@ -57,7 +57,8 @@ def per_turn(orch: Orchestrator, player: Player, tags: dict) -> tuple[list[dict]
         if t.is_barge_in and t.overlapped_agent:
             ov = next((o for o in orch.overlaps if t.start - 50 <= o.t_start <= t.start + 300), None)
             ov_rows.append({**tags, "type": "interruption", "text": t.text, "stopped": bool(ov and ov.stopped),
-                            "stop_ms": (ov.t_stop - t.start) if ov and ov.stopped else None})
+                            "stop_ms": (ov.t_stop - t.start) if ov and ov.stopped else None,
+                            "quiet_ms": (ov.t_quiet - t.start) if ov and ov.stopped and ov.t_quiet else None})
     return rows, ov_rows
 
 
@@ -76,6 +77,7 @@ def summarize(rows: list[dict], ov_rows: list[dict], decider_stats: dict[str, di
         bcs = [o for o in ovg[key] if o["type"] == "backchannel"]
         ints = [o for o in ovg[key] if o["type"] == "interruption"]
         stop_lat = [o["stop_ms"] for o in ints if o["stop_ms"] is not None]
+        quiet_lat = [o.get("quiet_ms") for o in ints if o.get("quiet_ms") is not None]
         urg = [r for r in replied if r.get("urgency_pred") is not None]
         ds = decider_stats.get("|".join(key), {})
         out.append({
@@ -92,6 +94,7 @@ def summarize(rows: list[dict], ov_rows: list[dict], decider_stats: dict[str, di
             "backchannel_false_stop_rate": round(sum(o["stopped"] for o in bcs) / len(bcs), 3) if bcs else None,
             "interruption_stop_rate": round(sum(o["stopped"] for o in ints) / len(ints), 3) if ints else None,
             "interruption_stop_p50_ms": round(_pct(stop_lat, 0.5)) if stop_lat else None,
+            "interruption_quiet_p50_ms": round(_pct(quiet_lat, 0.5)) if quiet_lat else None,
             "decider_calls": ds.get("calls"), "decider_p50_ms": ds.get("p50"), "decider_fallbacks": ds.get("fallbacks"),
             **{f"avg_{k}": round(statistics.fmean([r[k] for r in replied if k in r]), 1) if replied else None
                for k in ("wait_eot_ms", "route_ms", "tool_ms", "llm_ttft_ms", "tts_ms", "gate_hold_ms")},

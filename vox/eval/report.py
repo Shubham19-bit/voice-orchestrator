@@ -40,6 +40,7 @@ def markdown(summary: list[dict]) -> str:
             ("cut_in_rate", "Audible cut-ins", True), ("tool_accuracy", "Tool accuracy", True),
             ("backchannel_false_stop_rate", "Backchannel false stops", True),
             ("interruption_stop_p50_ms", "Interruption stop p50 (ms)", False),
+            ("interruption_quiet_p50_ms", "Agent quiet on interruption p50 (ms)", False),
             ("wasted_runs_per_turn", "Wasted pipeline runs / turn", None)]
     lines = ["| " + " | ".join(c[1] for c in cols) + " |", "|" + "---|" * len(cols)]
     for s in summary:
@@ -110,7 +111,7 @@ def charts(summary: list[dict], out: Path) -> list[Path]:
     # 3) conversation-quality side of the trade-off: small multiples, one measure each
     metrics = [("cut_in_rate", "Audible cut-ins (% turns)", True),
                ("backchannel_false_stop_rate", "Stopped on 'mm-hmm' (%)", True),
-               ("interruption_stop_p50_ms", "Time to stop on interruption (ms)", False),
+               ("interruption_quiet_p50_ms", "Time until agent is quiet on interruption (ms)", False),
                ("tool_accuracy", "Tool routing accuracy (%)*", True)]
     fig, axes = plt.subplots(1, len(metrics), figsize=(3.2 * len(metrics), 3.6))
     for ax, (key, title, pct) in zip(axes, metrics):
